@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PortPal - Local File Server</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 2rem;
+        }
+
+        .main-wrapper {
+            max-width: 1400px;
+            margin: 0 auto;
+            display: flex;
+            gap: 2rem;
+        }
+
+        .container {
+            flex: 1;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            padding: 2rem;
+        }
+
+        .side-panel {
+            width: 320px;
+            background: white;
+            border-radius: 10px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+            padding: 2rem;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 0.5rem;
+            font-size: 2rem;
+        }
+
+        .subtitle {
+            color: #666;
+            margin-bottom: 2rem;
+            font-size: 1rem;
+        }
+
+        .file-list {
+            list-style: none;
+        }
+
+        .file-item {
+            background: #f8f9fa;
+            border: 1px solid #e0e0e0;
+            padding: 1rem;
+            margin-bottom: 0.5rem;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+        }
+
+        .file-item:hover {
+            background: #f0f4ff;
+            border-color: #667eea;
+            transform: translateX(5px);
+        }
+
+        .file-item a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 500;
+            display: block;
+        }
+
+        .file-item a:hover {
+            text-decoration: underline;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: #999;
+        }
+
+        .empty-state p {
+            margin-bottom: 1rem;
+        }
+
+        .side-panel h2 {
+            color: #333;
+            margin-bottom: 1.5rem;
+            font-size: 1.3rem;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 0.5rem;
+        }
+
+        .stats-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 0.75rem;
+        }
+
+        .stat-item {
+            background: #f8f9fa;
+            border-left: 4px solid #667eea;
+            padding: 1rem;
+            border-radius: 5px;
+            transition: all 0.3s ease;
+        }
+
+        .stat-item:hover {
+            background: #f0f4ff;
+            transform: translateX(5px);
+        }
+
+        .stat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.5rem;
+        }
+
+        .stat-type {
+            font-weight: 600;
+            color: #333;
+            font-size: 0.95rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .stat-count {
+            background: #667eea;
+            color: white;
+            padding: 0.2rem 0.6rem;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 600;
+        }
+
+        .stat-bar {
+            background: #e0e0e0;
+            height: 8px;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 0.3rem;
+        }
+
+        .stat-fill {
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.5s ease;
+        }
+
+        .stat-percentage {
+            font-size: 0.85rem;
+            color: #666;
+        }
+
+        .total-files {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1.5rem;
+            border-radius: 8px;
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+
+        .total-files h3 {
+            font-size: 2.5rem;
+            margin-bottom: 0.3rem;
+        }
+
+        .total-files p {
+            opacity: 0.9;
+            font-size: 0.9rem;
+        }
+
+        @media (max-width: 1024px) {
+            .main-wrapper {
+                flex-direction: column;
+            }
+
+            .side-panel {
+                width: 100%;
+            }
+        }
+
+        .footer {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.8);
+            font-size: 0.85rem;
+            margin-top: 2rem;
+        }
+
+        .footer a {
+            color: rgba(255, 255, 255, 0.9);
+            text-decoration: none;
+            font-weight: 500;
+        }
+
+        .footer a:hover {
+            text-decoration: underline;
+        }
+
+        .demo-badge {
+            background: #ffd700;
+            color: #333;
+            padding: 0.4rem 0.8rem;
+            border-radius: 5px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            display: inline-block;
+            margin-bottom: 1rem;
+        }
+
+        .cta-button {
+            background: #667eea;
+            color: white;
+            padding: 0.8rem 1.5rem;
+            border-radius: 5px;
+            text-decoration: none;
+            display: inline-block;
+            margin-top: 1rem;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+
+        .cta-button:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="main-wrapper">
+        <div class="container">
+            <span class="demo-badge">🎨 Demo Preview</span>
+            <h1>📁 PortPal</h1>
+            <p class="subtitle">Lightweight local file server for sharing files over your LAN</p>
+            
+            <h2 style="color: #333; margin-top: 2rem; margin-bottom: 1rem;">Sample Files (Demo)</h2>
+            <ul id="fileList" class="file-list">
+                <!-- Demo files will be populated by JavaScript -->
+            </ul>
+
+            <a href="https://github.com/ThisIsDara/PortPal" class="cta-button" target="_blank">
+                📥 Download on GitHub
+            </a>
+        </div>
+
+        <div class="side-panel">
+            <div class="total-files">
+                <h3 id="totalFiles">0</h3>
+                <p>Total Files</p>
+            </div>
+
+            <h2>📊 File Statistics</h2>
+            <div id="statsGrid" class="stats-grid">
+                <!-- Statistics will be populated by JavaScript -->
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // File type icons mapping
+        const fileTypeIcons = {
+            'image': '🖼️',
+            'video': '🎬',
+            'audio': '🎵',
+            'document': '📄',
+            'code': '💻',
+            'archive': '📦',
+            'pdf': '📕',
+            'text': '📝',
+            'other': '📎'
+        };
+
+        // Demo files for showcase
+        const demoFiles = [
+            'presentation.pdf',
+            'vacation-photos.zip',
+            'project-report.docx',
+            'music-playlist.mp3',
+            'tutorial-video.mp4',
+            'app.js',
+            'styles.css',
+            'notes.txt',
+            'database-backup.sql',
+            'logo.png',
+            'screenshot.jpg',
+            'config.json'
+        ];
+
+        // Get file type from extension
+        function getFileType(filename) {
+            const ext = filename.split('.').pop().toLowerCase();
+            
+            const imageExts = ['jpg', 'jpeg', 'png', 'gif', 'bmp', 'svg', 'webp', 'ico'];
+            const videoExts = ['mp4', 'avi', 'mov', 'wmv', 'flv', 'mkv', 'webm'];
+            const audioExts = ['mp3', 'wav', 'ogg', 'flac', 'm4a', 'aac'];
+            const documentExts = ['doc', 'docx', 'xls', 'xlsx', 'ppt', 'pptx', 'odt', 'ods'];
+            const codeExts = ['js', 'py', 'html', 'css', 'java', 'cpp', 'c', 'php', 'rb', 'go', 'rs', 'ts', 'json', 'xml', 'sql'];
+            const archiveExts = ['zip', 'rar', '7z', 'tar', 'gz', 'bz2'];
+            const textExts = ['txt', 'md', 'log', 'csv'];
+            
+            if (ext === 'pdf') return 'pdf';
+            if (imageExts.includes(ext)) return 'image';
+            if (videoExts.includes(ext)) return 'video';
+            if (audioExts.includes(ext)) return 'audio';
+            if (documentExts.includes(ext)) return 'document';
+            if (codeExts.includes(ext)) return 'code';
+            if (archiveExts.includes(ext)) return 'archive';
+            if (textExts.includes(ext)) return 'text';
+            
+            return 'other';
+        }
+
+        // Calculate and display statistics
+        function updateStatistics(files) {
+            const typeCount = {};
+            const totalFiles = files.length;
+            
+            // Count files by type
+            files.forEach(file => {
+                const type = getFileType(file);
+                typeCount[type] = (typeCount[type] || 0) + 1;
+            });
+
+            // Update total files count
+            document.getElementById('totalFiles').textContent = totalFiles;
+
+            // Sort by count (descending)
+            const sortedTypes = Object.entries(typeCount).sort((a, b) => b[1] - a[1]);
+
+            // Generate statistics HTML
+            const statsGrid = document.getElementById('statsGrid');
+            if (sortedTypes.length > 0) {
+                statsGrid.innerHTML = sortedTypes.map(([type, count]) => {
+                    const percentage = ((count / totalFiles) * 100).toFixed(1);
+                    const icon = fileTypeIcons[type] || fileTypeIcons['other'];
+                    
+                    return `
+                        <div class="stat-item">
+                            <div class="stat-header">
+                                <span class="stat-type">
+                                    ${icon} ${type.charAt(0).toUpperCase() + type.slice(1)}
+                                </span>
+                                <span class="stat-count">${count}</span>
+                            </div>
+                            <div class="stat-bar">
+                                <div class="stat-fill" style="width: ${percentage}%"></div>
+                            </div>
+                            <span class="stat-percentage">${percentage}%</span>
+                        </div>
+                    `;
+                }).join('');
+            } else {
+                statsGrid.innerHTML = `
+                    <div class="empty-state" style="padding: 1rem;">
+                        <p style="font-size: 0.9rem;">No statistics available</p>
+                    </div>
+                `;
+            }
+        }
+
+        // Display demo files
+        function displayDemoFiles() {
+            const fileList = document.getElementById('fileList');
+            fileList.innerHTML = '';
+            
+            demoFiles.forEach(file => {
+                const li = document.createElement('li');
+                li.className = 'file-item';
+                const type = getFileType(file);
+                const icon = fileTypeIcons[type] || fileTypeIcons['other'];
+                li.innerHTML = `<a href="#" onclick="return false;">${icon} ${file}</a>`;
+                fileList.appendChild(li);
+            });
+            
+            // Update statistics
+            updateStatistics(demoFiles);
+        }
+
+        // Initialize demo
+        displayDemoFiles();
+    </script>
+
+    <div class="footer">
+        Made with ❤️ by <a href="https://github.com/ThisIsDara" target="_blank">ThisIsDara</a>
+    </div>
+</body>
+</html>
