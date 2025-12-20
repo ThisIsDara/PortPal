@@ -152,7 +152,15 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
-
+        # check if password is set
+        if parsed.path == '/api/has_password':
+            global SERVER_PASSWORD
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self._set_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({'has_password': SERVER_PASSWORD is not None and SERVER_PASSWORD != ""}).encode())
+            return
         # Handle API endpoint for file listing with optional path
         if parsed.path == '/api/files':
             query = parse_qs(parsed.query)
@@ -211,6 +219,23 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             pass
 
     def do_POST(self):
+        # logic for checking password
+        if self.path == '/api/login':
+            content_length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(content_length)
+            data = json.loads(body)
+            global SERVER_PASSWORD
+            if data.get('password') == SERVER_PASSWORD:
+                self.send_response(200)
+                self.send_header('Set-Cookie', 'session=valid; Path=/; HttpOnly')
+                self.end_headers()
+                self.wfile.write(b'OK')
+            else:
+                self.send_response(401)
+                self.end_headers()
+                self.wfile.write(b'Unauthorized')
+            return
+        # logic for handling uploads
         if self.path.startswith('/api/upload'):
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
@@ -464,6 +489,8 @@ def start_server_menu():
         choice = input("Enter your choice (1-3): ").strip()
         
         if choice == "1":
+            global SERVER_PASSWORD
+            SERVER_PASSWORD = input("Enter password for server [optional]: ")
             os.system('cls' if os.name == 'nt' else 'clear')
             print_banner()
             start_server(8000)
