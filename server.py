@@ -228,7 +228,8 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             self._set_cors_headers()
             self.end_headers()
             # Check if either username or password is set (authentication required)
-            has_auth = (SERVER_USERNAME is not None or SERVER_PASSWORD is not None)
+            # Must match the logic in _is_authenticated() - both None or empty strings mean no auth
+            has_auth = not ((SERVER_USERNAME is None or SERVER_USERNAME == "") and (SERVER_PASSWORD is None or SERVER_PASSWORD == ""))
             self.wfile.write(json.dumps({'has_password': has_auth}).encode())
             return
         # Handle API endpoint for file listing with optional path
