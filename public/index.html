@@ -667,37 +667,179 @@
         .theme-toggle:active {
             transform: scale(0.95);
         }
+
+        /* Login Screen Styles */
+        #loginScreen {
+            position: fixed;
+            inset: 0;
+            background: linear-gradient(135deg, var(--bg-gradient-start) 0%, var(--bg-gradient-end) 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+
+        #loginScreen.hidden {
+            display: none;
+        }
+
+        .login-container {
+            background: var(--container-bg);
+            padding: 2.5rem;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            width: 100%;
+            max-width: 400px;
+            animation: slideUp 0.4s ease;
+        }
+
+        @keyframes slideUp {
+            from {
+                transform: translateY(20px);
+                opacity: 0;
+            }
+            to {
+                transform: translateY(0);
+                opacity: 1;
+            }
+        }
+
+        .login-container h1 {
+            text-align: center;
+            margin-bottom: 0.5rem;
+            color: var(--text-primary);
+        }
+
+        .login-container p {
+            text-align: center;
+            color: var(--text-secondary);
+            margin-bottom: 2rem;
+            font-size: 0.9rem;
+        }
+
+        .login-form {
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .form-group label {
+            font-weight: 500;
+            color: var(--text-primary);
+            font-size: 0.9rem;
+        }
+
+        .form-group input {
+            padding: 0.75rem;
+            border: 2px solid var(--card-border);
+            border-radius: 8px;
+            font-size: 1rem;
+            color: var(--text-primary);
+            background: var(--card-bg);
+            transition: border-color 0.2s ease;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: var(--accent-color);
+            background: var(--card-hover-bg);
+        }
+
+        .login-error {
+            color: #c0392b;
+            font-size: 0.85rem;
+            margin-top: -0.5rem;
+            display: none;
+        }
+
+        .login-error.show {
+            display: block;
+        }
+
+        .login-btn {
+            padding: 0.75rem;
+            background: var(--accent-color);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.3s ease, transform 0.1s ease;
+            margin-top: 0.5rem;
+        }
+
+        .login-btn:hover {
+            background: var(--accent-hover);
+        }
+
+        .login-btn:active {
+            transform: scale(0.98);
+        }
+
+        .login-btn:disabled {
+            background: var(--text-tertiary);
+            cursor: not-allowed;
+            transform: scale(1);
+        }
+
+        #mainContent {
+            transition: opacity 0.3s ease;
+        }
+
+        #mainContent.hidden {
+            display: none;
+        }
     </style>
 </head>
 <body>
-    <div id="prompt-overlay" class="overlay hidden">
-        <div class="prompt-box">
-            <h3>Enter Password</h3>
-            <input type="text" class="prompt-input" id="prompt-input"/>
-            <div class="actions">
-                <button class="primary-btn" onclick="submitPrompt()">Submit</button>
-            </div>
+    <!-- Login Screen -->
+    <div id="loginScreen">
+        <div class="login-container">
+            <h1>🔐 PortPal</h1>
+            <p>Enter your credentials to access files</p>
+            <form class="login-form" onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" placeholder="Enter username" required autocomplete="username">
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" placeholder="Enter password" required autocomplete="current-password">
+                </div>
+                <div class="login-error" id="loginError"></div>
+                <button type="submit" class="login-btn" id="loginBtn">Login</button>
+            </form>
         </div>
     </div>
 
-    <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">
-        <span id="themeIcon">🌙</span>
-    </button>
-    
-    <div class="main-wrapper">
-        <div class="container">
-            <h1>📁 PortPal</h1>
-            <p class="subtitle">Your file hosting server is running</p>
+    <!-- Main Content (Hidden until logged in) -->
+    <div id="mainContent" class="hidden">
+        <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">
+            <span id="themeIcon">🌙</span>
+        </button>
+        
+        <div class="main-wrapper">
+            <div class="container">
+                <h1>📁 PortPal</h1>
+                <p class="subtitle">Your file hosting server is running</p>
 
-            <div class="upload-card" id="uploadCard">
-                <div class="upload-header">
-                    <div>
-                        <h3>Upload Files</h3>
-                        <p>Drag and drop or choose files to share with others on this host.</p>
+                <div class="upload-card" id="uploadCard">
+                    <div class="upload-header">
+                        <div>
+                            <h3>Upload Files</h3>
+                            <p>Drag and drop or choose files to share with others on this host.</p>
+                        </div>
+                        <button id="selectFiles" class="primary-btn">Select files</button>
                     </div>
-                    <button id="selectFiles" class="primary-btn">Select files</button>
-                </div>
-                <div class="drop-zone" id="dropZone">
+                    <div class="drop-zone" id="dropZone">
                     <input type="file" id="fileInput" multiple style="display: none;" />
                     <p class="drop-title">Drop files here</p>
                     <p class="drop-subtitle">or click "Select files" to browse</p>
@@ -745,50 +887,101 @@
                 </div>
             </div>
         </div>
+        </div>
     </div>
 
+    <!-- End mainContent -->
+
     <script>
-        // pretty prompt elements
-        let passwordCallback = null;
-
-        function openPrompt(callback) {
-            passwordCallback = callback;
-            document.getElementById("prompt-overlay").classList.remove("hidden");
-        }
-
-        function closePrompt() {
-            document.getElementById("prompt-overlay").classList.add("hidden");
-        }
-
-        function submitPrompt() {
-            const value = document.getElementById("prompt-input").value;
-            closePrompt();
-            if (passwordCallback) {
-                passwordCallback(value);
+        // Check if password is required on page load
+        async function initializeApp() {
+            try {
+                const response = await fetch('/api/has_password', {
+                    credentials: 'include'
+                });
+                const data = await response.json();
+                
+                if (data.has_password) {
+                    // Show login screen, keep mainContent hidden
+                    document.getElementById('loginScreen').classList.remove('hidden');
+                    document.getElementById('mainContent').classList.add('hidden');
+                } else {
+                    // No password required, show main content
+                    document.getElementById('loginScreen').classList.add('hidden');
+                    document.getElementById('mainContent').classList.remove('hidden');
+                    loadFiles();
+                    loadStorage();
+                }
+            } catch (error) {
+                console.error('Error checking password:', error);
+                // Show login screen on error
+                document.getElementById('loginScreen').classList.remove('hidden');
             }
         }
 
-        // handle password
-        function handle_pass() {
-            fetch('/api/has_password')
-            .then(res => res.json())
-            .then(data => {
-                if (data.has_password) {
-                    openPrompt(function(password) {
-                        fetch('/api/login', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({password})
-                        }).then(res => {
-                            if (!res.ok) {
-                                handle_pass();
-                            }
-                        });
-                    });
+        // Handle login form submission
+        async function handleLogin(event) {
+            event.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const loginBtn = document.getElementById('loginBtn');
+            const loginError = document.getElementById('loginError');
+            
+            // Clear previous error
+            loginError.classList.remove('show');
+            loginError.textContent = '';
+            
+            // Disable button during submission
+            loginBtn.disabled = true;
+            loginBtn.textContent = 'Logging in...';
+            
+            try {
+                const response = await fetch('/api/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ username, password })
+                });
+                
+                if (response.ok) {
+                    // Login successful, hide login screen and show main content
+                    document.getElementById('loginScreen').classList.add('hidden');
+                    document.getElementById('mainContent').classList.remove('hidden');
+                    loadFiles();
+                    loadStorage();
+                } else if (response.status === 429) {
+                    // Too many failed attempts - locked out
+                    const data = await response.json();
+                    const minutes = Math.ceil(data.retry_after / 60);
+                    loginError.textContent = `Too many failed attempts. Please try again in ${minutes} minute${minutes !== 1 ? 's' : ''}.`;
+                    loginError.classList.add('show');
+                    loginBtn.disabled = true;
+                    loginBtn.textContent = 'Locked';
+                    document.getElementById('password').value = '';
+                    
+                    // Re-enable button after lockout expires
+                    setTimeout(() => {
+                        loginBtn.disabled = false;
+                        loginBtn.textContent = 'Login';
+                        loginError.classList.remove('show');
+                    }, data.retry_after * 1000);
+                } else {
+                    // Login failed
+                    loginError.textContent = 'Invalid username or password';
+                    loginError.classList.add('show');
+                    loginBtn.disabled = false;
+                    loginBtn.textContent = 'Login';
+                    document.getElementById('password').value = '';
                 }
-            });
+            } catch (error) {
+                console.error('Login error:', error);
+                loginError.textContent = 'An error occurred. Please try again.';
+                loginError.classList.add('show');
+                loginBtn.disabled = false;
+                loginBtn.textContent = 'Login';
+            }
         }
-        handle_pass();
         
         // File type icons mapping
         const fileTypeIcons = {
@@ -1080,7 +1273,9 @@
 
         function loadFiles(path = '') {
             const params = path ? `?path=${encodeURIComponent(path)}` : '';
-            return fetch(`/api/files${params}`)
+            return fetch(`/api/files${params}`, {
+                credentials: 'include'
+            })
                 .then(response => response.json())
                 .then(renderFiles)
                 .catch(err => {
@@ -1125,7 +1320,9 @@
         }
 
         function loadStorage() {
-            fetch('/api/storage')
+            fetch('/api/storage', {
+                credentials: 'include'
+            })
                 .then(r => r.json())
                 .then(renderStorage)
                 .catch(() => {
@@ -1211,6 +1408,7 @@
                 
                 const response = await fetch(url, {
                     method: 'DELETE',
+                    credentials: 'include',
                     headers: {
                         'Content-Type': 'application/json'
                     }
@@ -1263,8 +1461,9 @@
         });
 
         let currentPath = '';
-        loadFiles();
-        loadStorage();
+        
+        // Initialize the app (check authentication and load files if needed)
+        initializeApp();
 
         // Dark mode toggle
         const themeToggle = document.getElementById('themeToggle');

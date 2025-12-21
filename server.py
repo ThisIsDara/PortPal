@@ -13,17 +13,85 @@ import json
 import socket
 import threading
 import shutil
+import time
 from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import urlparse, parse_qs
 from typing import Optional, Tuple
+from collections import defaultdict
 
 
 # Thread pool for background operations
 background_executor = ThreadPoolExecutor(max_workers=2)
 
+# Global password variable
+SERVER_PASSWORD = None
+SERVER_USERNAME = None
+
+# Brute force protection
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_DURATION = 900  # 15 minutes in seconds
+login_attempts = defaultdict(list)  # IP -> list of attempt timestamps
+locked_ips = {}  # IP -> lockout timestamp
+
 
 class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
     root_dir = os.getcwd()
+
+    def _get_client_ip(self) -> str:
+        """Get the client's IP address"""
+        # Check for X-Forwarded-For header (if behind proxy)
+        forwarded = self.headers.get('X-Forwarded-For')
+        if forwarded:
+            return forwarded.split(',')[0].strip()
+        return self.client_address[0]
+
+    def _is_ip_locked(self, ip: str) -> bool:
+        """Check if an IP is currently locked out"""
+        global locked_ips
+        if ip in locked_ips:
+            lock_time = locked_ips[ip]
+            if time.time() - lock_time < LOCKOUT_DURATION:
+                return True
+            else:
+                # Lockout expired, remove it
+                del locked_ips[ip]
+                if ip in login_attempts:
+                    login_attempts[ip].clear()
+        return False
+
+    def _record_failed_login(self, ip: str):
+        """Record a failed login attempt"""
+        global login_attempts, locked_ips
+        current_time = time.time()
+        
+        # Remove attempts older than lockout duration
+        login_attempts[ip] = [t for t in login_attempts[ip] if current_time - t < LOCKOUT_DURATION]
+        
+        # Add current attempt
+        login_attempts[ip].append(current_time)
+        
+        # Check if we should lock this IP
+        if len(login_attempts[ip]) >= MAX_LOGIN_ATTEMPTS:
+            locked_ips[ip] = current_time
+            print(f"⚠️  IP {ip} locked out after {MAX_LOGIN_ATTEMPTS} failed login attempts")
+
+    def _clear_failed_logins(self, ip: str):
+        """Clear failed login attempts for an IP after successful login"""
+        global login_attempts, locked_ips
+        if ip in login_attempts:
+            login_attempts[ip].clear()
+        if ip in locked_ips:
+            del locked_ips[ip]
+
+    def _is_authenticated(self) -> bool:
+        """Check if the request has valid authentication"""
+        global SERVER_PASSWORD, SERVER_USERNAME
+        # If neither username nor password is set, allow all requests
+        if (SERVER_USERNAME is None or SERVER_USERNAME == "") and (SERVER_PASSWORD is None or SERVER_PASSWORD == ""):
+            return True
+        # Check for valid session cookie
+        cookies = self.headers.get('Cookie', '')
+        return 'session=valid' in cookies
 
     def _set_cors_headers(self):
         """Set CORS headers for API responses"""
@@ -154,15 +222,26 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
         parsed = urlparse(self.path)
         # check if password is set
         if parsed.path == '/api/has_password':
-            global SERVER_PASSWORD
+            global SERVER_PASSWORD, SERVER_USERNAME
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self._set_cors_headers()
             self.end_headers()
-            self.wfile.write(json.dumps({'has_password': SERVER_PASSWORD is not None and SERVER_PASSWORD != ""}).encode())
+            # Check if either username or password is set (authentication required)
+            has_auth = (SERVER_USERNAME is not None or SERVER_PASSWORD is not None)
+            self.wfile.write(json.dumps({'has_password': has_auth}).encode())
             return
         # Handle API endpoint for file listing with optional path
         if parsed.path == '/api/files':
+            # Check authentication for file listing
+            if not self._is_authenticated():
+                self.send_response(401)
+                self.send_header('Content-type', 'application/json')
+                self._set_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Unauthorized'}).encode())
+                return
+            
             query = parse_qs(parsed.query)
             rel_path = query.get('path', [''])[0]
 
@@ -184,6 +263,15 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
 
         # Storage info endpoint
         if parsed.path == '/api/storage':
+            # Check authentication for storage info
+            if not self._is_authenticated():
+                self.send_response(401)
+                self.send_header('Content-type', 'application/json')
+                self._set_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Unauthorized'}).encode())
+                return
+            
             try:
                 total, used, free = shutil.disk_usage(self.root_dir)
                 percent_used = (used / total * 100.0) if total else 0.0
@@ -208,7 +296,16 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(json.dumps({'error': 'Unable to read storage info'}).encode())
             return
 
-        # Default behavior for other requests
+        # Default behavior for other requests (file downloads)
+        # Check authentication before serving files
+        if not self._is_authenticated():
+            self.send_response(401)
+            self.send_header('Content-type', 'application/json')
+            self._set_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({'error': 'Unauthorized'}).encode())
+            return
+        
         try:
             super().do_GET()
         except (ConnectionResetError, BrokenPipeError):
@@ -221,22 +318,67 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
     def do_POST(self):
         # logic for checking password
         if self.path == '/api/login':
+            client_ip = self._get_client_ip()
+            
+            # Check if IP is locked out
+            if self._is_ip_locked(client_ip):
+                self.send_response(429)  # Too Many Requests
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Retry-After', str(LOCKOUT_DURATION))
+                self.end_headers()
+                remaining_time = int(LOCKOUT_DURATION - (time.time() - locked_ips.get(client_ip, 0)))
+                self.wfile.write(json.dumps({
+                    'success': False, 
+                    'error': 'Too many failed attempts',
+                    'retry_after': remaining_time
+                }).encode())
+                return
+            
             content_length = int(self.headers.get('Content-Length', 0))
             body = self.rfile.read(content_length)
             data = json.loads(body)
-            global SERVER_PASSWORD
-            if data.get('password') == SERVER_PASSWORD:
+            global SERVER_PASSWORD, SERVER_USERNAME
+            
+            username = data.get('username', '')
+            password = data.get('password', '')
+            
+            # Check both username and password
+            if username == SERVER_USERNAME and password == SERVER_PASSWORD:
+                # Successful login - clear failed attempts
+                self._clear_failed_logins(client_ip)
+                
                 self.send_response(200)
-                self.send_header('Set-Cookie', 'session=valid; Path=/; HttpOnly')
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
+                self.send_header('Access-Control-Allow-Credentials', 'true')
+                self.send_header('Set-Cookie', 'session=valid; Path=/; SameSite=Lax')
                 self.end_headers()
-                self.wfile.write(b'OK')
+                self.wfile.write(json.dumps({'success': True}).encode())
             else:
+                # Failed login - record attempt
+                self._record_failed_login(client_ip)
+                
+                # Add a small delay to slow down brute force attempts
+                time.sleep(1)
+                
                 self.send_response(401)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
-                self.wfile.write(b'Unauthorized')
+                self.wfile.write(json.dumps({'success': False}).encode())
             return
         # logic for handling uploads
         if self.path.startswith('/api/upload'):
+            # Check authentication for uploads
+            if not self._is_authenticated():
+                self.send_response(401)
+                self._set_cors_headers()
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Unauthorized'}).encode())
+                return
+            
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
             rel_dir = query.get('path', [''])[0]
@@ -281,6 +423,15 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
     def do_DELETE(self):
         """Handle file/folder deletion"""
         if self.path.startswith('/api/delete'):
+            # Check authentication for deletion
+            if not self._is_authenticated():
+                self.send_response(401)
+                self._set_cors_headers()
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Unauthorized'}).encode())
+                return
+            
             parsed = urlparse(self.path)
             query = parse_qs(parsed.query)
             rel_path = query.get('path', [''])[0]
@@ -476,6 +627,7 @@ def start_server(port=None):
 
 def start_server_menu():
     """Show server startup options"""
+    global SERVER_PASSWORD, SERVER_USERNAME
     while True:
         os.system('cls' if os.name == 'nt' else 'clear')
         print_banner()
@@ -489,8 +641,13 @@ def start_server_menu():
         choice = input("Enter your choice (1-3): ").strip()
         
         if choice == "1":
-            global SERVER_PASSWORD
-            SERVER_PASSWORD = input("Enter password for server [optional]: ")
+            username = input("Enter username for server [optional]: ").strip()
+            password = input("Enter password for server [optional]: ").strip()
+            
+            if username or password:
+                SERVER_USERNAME = username if username else None
+                SERVER_PASSWORD = password if password else None
+            
             os.system('cls' if os.name == 'nt' else 'clear')
             print_banner()
             start_server(8000)
@@ -498,6 +655,15 @@ def start_server_menu():
         elif choice == "2":
             os.system('cls' if os.name == 'nt' else 'clear')
             print_banner()
+            
+            # Get credentials first
+            username = input("Enter username for server [optional]: ").strip()
+            password = input("Enter password for server [optional]: ").strip()
+            
+            if username or password:
+                SERVER_USERNAME = username if username else None
+                SERVER_PASSWORD = password if password else None
+            
             while True:
                 try:
                     port_input = input("Enter port number [8000] (or 'N' to return): ").strip().lower()

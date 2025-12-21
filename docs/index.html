@@ -672,7 +672,7 @@
 <body>
     <div class="security-banner">
         <strong>⚠️ SECURITY NOTICE ⚠️</strong>
-        🔒 For LOCAL NETWORK USE ONLY • No Authentication • Use on TRUSTED Networks Only 🔒
+        🔒 For LOCAL NETWORK USE ONLY • Optional Username/Password Protection • Use on TRUSTED Networks 🔒
     </div>
     
     <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">
@@ -686,9 +686,10 @@
 
             <div class="security-warning">
                 <strong>⚠️ Important Security Information</strong>
-                🔓 This server has <strong>NO AUTHENTICATION</strong> - anyone on your network can access files<br>
+                🔒 This server supports <strong>OPTIONAL AUTHENTICATION</strong> - set username/password when starting the server<br>
+                🛡️ Includes <strong>BRUTE FORCE PROTECTION</strong> - automatic lockout after 5 failed login attempts<br>
                 🏠 Use only on <strong>TRUSTED LOCAL NETWORKS</strong><br>
-                📁 Only share files you're comfortable with others seeing<br>
+                📁 Enable authentication to protect your files from unauthorized access<br>
                 🚫 <strong>NEVER expose to the public internet</strong>
             </div>
 
@@ -1223,7 +1224,7 @@
         }
 
         function deleteFile(filename, itemType) {
-            alert('Demo Mode: Delete is not available in this demo. On a live server, you can delete files without needing to login!');
+            alert('Demo Mode: Delete is not available in this demo. On a live server, you can delete files when authenticated!');
         }
 
         // Disable upload functionality in demo mode
