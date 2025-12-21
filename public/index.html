@@ -63,7 +63,48 @@
             color: var(--text-primary);
             transition: background 0.3s ease, color 0.3s ease;
         }
+        /* pretty prompt style */
+        .title {
+            color: #5C6AC4;
+        }
 
+        .overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .prompt-input {
+            width: 100%;
+            padding: 12px;
+            margin: 8px 0;
+            display: inline-block;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        .prompt-box {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            width: 300px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+        }
+
+        .actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+        }
+
+        .hidden {
+            display: none;
+        }
+        /* main code style */
         .main-wrapper {
             max-width: 1400px;
             margin: 0 auto;
@@ -629,6 +670,16 @@
     </style>
 </head>
 <body>
+    <div id="prompt-overlay" class="overlay hidden">
+        <div class="prompt-box">
+            <h3>Enter Password</h3>
+            <input type="text" class="prompt-input" id="prompt-input"/>
+            <div class="actions">
+                <button class="primary-btn" onclick="submitPrompt()">Submit</button>
+            </div>
+        </div>
+    </div>
+
     <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode">
         <span id="themeIcon">🌙</span>
     </button>
@@ -697,6 +748,48 @@
     </div>
 
     <script>
+        // pretty prompt elements
+        let passwordCallback = null;
+
+        function openPrompt(callback) {
+            passwordCallback = callback;
+            document.getElementById("prompt-overlay").classList.remove("hidden");
+        }
+
+        function closePrompt() {
+            document.getElementById("prompt-overlay").classList.add("hidden");
+        }
+
+        function submitPrompt() {
+            const value = document.getElementById("prompt-input").value;
+            closePrompt();
+            if (passwordCallback) {
+                passwordCallback(value);
+            }
+        }
+
+        // handle password
+        function handle_pass() {
+            fetch('/api/has_password')
+            .then(res => res.json())
+            .then(data => {
+                if (data.has_password) {
+                    openPrompt(function(password) {
+                        fetch('/api/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({password})
+                        }).then(res => {
+                            if (!res.ok) {
+                                handle_pass();
+                            }
+                        });
+                    });
+                }
+            });
+        }
+        handle_pass();
+        
         // File type icons mapping
         const fileTypeIcons = {
             'image': '🖼️',
