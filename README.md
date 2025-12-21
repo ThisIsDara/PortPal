@@ -23,7 +23,6 @@ PortPal is a lightweight local file server designed for sharing files over your 
 
 PortPal is designed for **local network use only**. Please be aware:
 
-- No authentication is implemented - anyone on your network can access shared files
 - Only place files you want to share in the `public/` folder
 - Do not expose this server to the public internet
 - Use only on trusted networks
