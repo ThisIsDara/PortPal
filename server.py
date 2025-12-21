@@ -298,8 +298,12 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             return
 
         # Default behavior for other requests (file downloads)
-        # Check authentication before serving files
-        if not self._is_authenticated():
+        # Allow unauthenticated access to root path and index.html (contains login form)
+        # but require authentication for everything else
+        parsed_path = parsed.path.rstrip('/')
+        is_index_page = parsed_path == '' or parsed_path == '/index.html'
+        
+        if not is_index_page and not self._is_authenticated():
             self.send_response(401)
             self.send_header('Content-type', 'application/json')
             self._set_cors_headers()
