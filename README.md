@@ -46,6 +46,12 @@ PortPal is designed for **local network use only**. Security features:
 - Python 3.8 or higher
 - Windows (tested), macOS, and Linux compatible
 
+## Download (Windows Binary)
+
+- Grab the latest prebuilt executable from the [GitHub Releases page](https://github.com/ThisIsDara/PortPal/releases)
+- Run `PortPal.exe` on Windows
+- No Python install needed for the binary; use the installation steps below if running from source
+
 ## Installation
 
 Clone the repository:
