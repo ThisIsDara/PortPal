@@ -1,82 +1,85 @@
 """
-Local hosting server for websites and files.
-Created by <ThisIsDara> - <AlirezaJahangiri>
-This credit is optional and may be removed.
+PortPal GUI Server - Desktop application for easy file sharing
+Features: Folder selection, IPv4 display, port configuration, persistent settings
 """
 
-
-import http.server
-import socketserver
-import argparse
+import PySimpleGUI as sg
+# Fallback UI
+try:
+    import tkinter as tk
+    from tkinter import filedialog, messagebox
+except Exception:
+    tk = None
+    filedialog = None
+    messagebox = None
 import os
 import json
 import socket
 import threading
-import shutil
 import time
-from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+import functools
+import sys
+import http.server
+import socketserver
 from urllib.parse import urlparse, parse_qs
-from typing import Optional, Tuple
+from concurrent.futures import ThreadPoolExecutor
 from collections import defaultdict
+import shutil
 
+# Configuration file
+CONFIG_FILE = os.path.join(os.path.expanduser("~"), ".portpal_gui_config.json")
+
+# Resolve fallback landing page (works in frozen exe via _MEIPASS)
+def fallback_index_path() -> Path:
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / "public" / "index.html"
 
 # Thread pool for background operations
 background_executor = ThreadPoolExecutor(max_workers=2)
 
-# Global password variable
+# Global password variables
 SERVER_PASSWORD = None
 SERVER_USERNAME = None
+CURRENT_SERVER = None
 
 # Brute force protection
 MAX_LOGIN_ATTEMPTS = 5
-LOCKOUT_DURATION = 900  # 15 minutes in seconds
-login_attempts = defaultdict(list)  # IP -> list of attempt timestamps
-locked_ips = {}  # IP -> lockout timestamp
+LOCKOUT_DURATION = 900
+login_attempts = defaultdict(list)
+locked_ips = {}
 
 
 class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
     root_dir = os.getcwd()
 
     def _get_client_ip(self) -> str:
-        """Get the client's IP address"""
-        # Check for X-Forwarded-For header (if behind proxy)
         forwarded = self.headers.get('X-Forwarded-For')
         if forwarded:
             return forwarded.split(',')[0].strip()
         return self.client_address[0]
 
     def _is_ip_locked(self, ip: str) -> bool:
-        """Check if an IP is currently locked out"""
         global locked_ips
         if ip in locked_ips:
             lock_time = locked_ips[ip]
             if time.time() - lock_time < LOCKOUT_DURATION:
                 return True
             else:
-                # Lockout expired, remove it
                 del locked_ips[ip]
                 if ip in login_attempts:
                     login_attempts[ip].clear()
         return False
 
     def _record_failed_login(self, ip: str):
-        """Record a failed login attempt"""
         global login_attempts, locked_ips
         current_time = time.time()
-        
-        # Remove attempts older than lockout duration
         login_attempts[ip] = [t for t in login_attempts[ip] if current_time - t < LOCKOUT_DURATION]
-        
-        # Add current attempt
         login_attempts[ip].append(current_time)
-        
-        # Check if we should lock this IP
         if len(login_attempts[ip]) >= MAX_LOGIN_ATTEMPTS:
             locked_ips[ip] = current_time
-            print(f"⚠️  IP {ip} locked out after {MAX_LOGIN_ATTEMPTS} failed login attempts")
 
     def _clear_failed_logins(self, ip: str):
-        """Clear failed login attempts for an IP after successful login"""
         global login_attempts, locked_ips
         if ip in login_attempts:
             login_attempts[ip].clear()
@@ -84,22 +87,18 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             del locked_ips[ip]
 
     def _is_authenticated(self) -> bool:
-        """Check if the request has valid authentication"""
         global SERVER_PASSWORD, SERVER_USERNAME
-        # If neither username nor password is set, allow all requests
         if (SERVER_USERNAME is None or SERVER_USERNAME == "") and (SERVER_PASSWORD is None or SERVER_PASSWORD == ""):
             return True
-        # Check for valid session cookie
         cookies = self.headers.get('Cookie', '')
         return 'session=valid' in cookies
 
     def _set_cors_headers(self):
-        """Set CORS headers for API responses"""
         self.send_header('Access-Control-Allow-Origin', '*')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type, X-Requested-With')
         self.send_header('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS')
 
-    def _safe_path(self, rel_path: str) -> Optional[str]:
+    def _safe_path(self, rel_path: str):
         rel_path = rel_path.strip() if rel_path else ''
         rel_path = rel_path.lstrip('/\\')
         norm_rel = os.path.normpath(rel_path)
@@ -108,8 +107,7 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             return None
         return abs_path
 
-    def _save_path(self, rel_dir: str, filename: str) -> Optional[str]:
-        """Return absolute path to save filename inside rel_dir; ensure dir exists and is inside root."""
+    def _save_path(self, rel_dir: str, filename: str):
         target_dir = self._safe_path(rel_dir)
         if target_dir is None or not os.path.isdir(target_dir):
             return None
@@ -136,10 +134,8 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 })
             items.sort(key=lambda x: (x['type'] != 'dir', x['name'].lower()))
         except Exception as e:
-            print(f"Error listing path {rel_path}: {e}")
             return None
 
-        # Normalize paths for client
         clean_path = rel_path.replace('\\', '/').strip('.') if rel_path else ''
         parent = ''
         if clean_path:
@@ -153,9 +149,7 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             'items': items
         }
 
-    def _parse_multipart(self, content_type: str) -> Tuple[Optional[str], Optional[bytes]]:
-        """Minimal multipart/form-data parser that returns (filename, file_bytes) for the 'file' part."""
-        # Extract boundary
+    def _parse_multipart(self, content_type: str):
         parts = content_type.split('boundary=')
         if len(parts) < 2:
             return None, None
@@ -170,12 +164,10 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             return None, None
 
         raw_data = self.rfile.read(content_length)
-        # Split parts ignoring the first preamble and last epilogue
         segments = raw_data.split(boundary_bytes)
         for segment in segments:
             if not segment or segment in (b'--', b'--\r\n'):
                 continue
-            # Each part: headers \r\n\r\n body
             if segment.startswith(b'\r\n'):
                 segment = segment[2:]
             try:
@@ -183,7 +175,7 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             except ValueError:
                 continue
             headers_text = header_bytes.decode(errors='ignore')
-            body = body.rstrip(b'\r\n')  # strip trailing newlines and boundary markers
+            body = body.rstrip(b'\r\n')
 
             disposition = None
             for line in headers_text.split('\r\n'):
@@ -193,8 +185,8 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             if not disposition:
                 continue
 
-            # Parse filename from content-disposition
             filename = None
+            field_name = None
             for token in disposition.split(';'):
                 token = token.strip()
                 if token.startswith('filename='):
@@ -220,21 +212,16 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
-        # check if password is set
         if parsed.path == '/api/has_password':
             global SERVER_PASSWORD, SERVER_USERNAME
             self.send_response(200)
             self.send_header('Content-type', 'application/json')
             self._set_cors_headers()
             self.end_headers()
-            # Check if either username or password is set (authentication required)
-            # Must match the logic in _is_authenticated() - both None or empty strings mean no auth
             has_auth = not ((SERVER_USERNAME is None or SERVER_USERNAME == "") and (SERVER_PASSWORD is None or SERVER_PASSWORD == ""))
             self.wfile.write(json.dumps({'has_password': has_auth}).encode())
             return
-        # Handle API endpoint for file listing with optional path
         if parsed.path == '/api/files':
-            # Check authentication for file listing
             if not self._is_authenticated():
                 self.send_response(401)
                 self.send_header('Content-type', 'application/json')
@@ -245,7 +232,6 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             
             query = parse_qs(parsed.query)
             rel_path = query.get('path', [''])[0]
-
             listing = self._list_dir(rel_path)
             if listing is None:
                 self.send_response(400)
@@ -262,9 +248,7 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(json.dumps(listing).encode())
             return
 
-        # Storage info endpoint
         if parsed.path == '/api/storage':
-            # Check authentication for storage info
             if not self._is_authenticated():
                 self.send_response(401)
                 self.send_header('Content-type', 'application/json')
@@ -289,7 +273,6 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps(payload).encode())
             except Exception as e:
-                print(f"Storage info error: {e}")
                 self.send_response(500)
                 self.send_header('Content-type', 'application/json')
                 self._set_cors_headers()
@@ -297,12 +280,9 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(json.dumps({'error': 'Unable to read storage info'}).encode())
             return
 
-        # Default behavior for other requests (file downloads)
-        # Allow unauthenticated access to root path and index.html (contains login form)
-        # but require authentication for everything else
         parsed_path = parsed.path.rstrip('/')
         is_index_page = parsed_path == '' or parsed_path == '/index.html'
-        
+
         if not is_index_page and not self._is_authenticated():
             self.send_response(401)
             self.send_header('Content-type', 'application/json')
@@ -310,29 +290,40 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({'error': 'Unauthorized'}).encode())
             return
-        
-        # Always route root-style requests to index.html so the landing page loads
-        if parsed.path in ('', '/', '/index', '/index.html'):
-            self.path = '/index.html'
-            is_index_page = True
 
+        # Always serve bundled landing page for root/index requests
+        if parsed.path in ('', '/', '/index', '/index.html'):
+            fallback_index = fallback_index_path()
+            if fallback_index.exists():
+                try:
+                    with open(fallback_index, 'rb') as f:
+                        content = f.read()
+                    self.send_response(200)
+                    self.send_header('Content-type', 'text/html; charset=utf-8')
+                    self._set_cors_headers()
+                    self.end_headers()
+                    self.wfile.write(content)
+                    return
+                except Exception:
+                    self.send_error(404, "File not found")
+                    return
+            else:
+                self.send_error(404, "File not found")
+                return
+        
         try:
             super().do_GET()
         except (ConnectionResetError, BrokenPipeError):
-            # Client closed connection
             pass
-        except OSError as e:
-            # khafe sho
+        except OSError:
             pass
 
     def do_POST(self):
-        # logic for checking password
         if self.path == '/api/login':
             client_ip = self._get_client_ip()
             
-            # Check if IP is locked out
             if self._is_ip_locked(client_ip):
-                self.send_response(429)  # Too Many Requests
+                self.send_response(429)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.send_header('Retry-After', str(LOCKOUT_DURATION))
@@ -353,11 +344,8 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             username = data.get('username', '')
             password = data.get('password', '')
             
-            # Check both username and password
             if username == SERVER_USERNAME and password == SERVER_PASSWORD:
-                # Successful login - clear failed attempts
                 self._clear_failed_logins(client_ip)
-                
                 self.send_response(200)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Access-Control-Allow-Origin', '*')
@@ -366,21 +354,16 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({'success': True}).encode())
             else:
-                # Failed login - record attempt
                 self._record_failed_login(client_ip)
-                
-                # Add a small delay to slow down brute force attempts
                 time.sleep(1)
-                
                 self.send_response(401)
                 self.send_header('Content-Type', 'application/json')
                 self.send_header('Access-Control-Allow-Origin', '*')
                 self.end_headers()
                 self.wfile.write(json.dumps({'success': False}).encode())
             return
-        # logic for handling uploads
+
         if self.path.startswith('/api/upload'):
-            # Check authentication for uploads
             if not self._is_authenticated():
                 self.send_response(401)
                 self._set_cors_headers()
@@ -420,7 +403,6 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 self.end_headers()
                 self.wfile.write(json.dumps({'message': 'Upload successful', 'filename': os.path.basename(save_path), 'path': rel_dir}).encode())
             except Exception as e:
-                print(f"Upload error: {e}")
                 self.send_response(500)
                 self._set_cors_headers()
                 self.send_header('Content-Type', 'application/json')
@@ -431,9 +413,7 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
         super().do_POST()
 
     def do_DELETE(self):
-        """Handle file/folder deletion"""
         if self.path.startswith('/api/delete'):
-            # Check authentication for deletion
             if not self._is_authenticated():
                 self.send_response(401)
                 self._set_cors_headers()
@@ -455,7 +435,6 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(json.dumps({'error': 'Missing name parameter'}).encode())
                 return
 
-            # Build safe path (empty rel_path means root directory)
             if rel_path:
                 parent_dir = self._safe_path(rel_path)
                 if parent_dir is None or not os.path.isdir(parent_dir):
@@ -468,11 +447,9 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 parent_dir = self.root_dir
 
-            # Only delete basenames to prevent path traversal
             safe_name = os.path.basename(item_name)
             target_path = os.path.join(parent_dir, safe_name)
 
-            # Verify target is inside root_dir
             target_abs = os.path.normpath(os.path.abspath(target_path))
             root_abs = os.path.normpath(os.path.abspath(self.root_dir))
             if not target_abs.startswith(root_abs):
@@ -483,7 +460,6 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(json.dumps({'error': 'Access denied'}).encode())
                 return
 
-            # Check if target exists
             if not os.path.exists(target_path):
                 self.send_response(404)
                 self._set_cors_headers()
@@ -492,23 +468,17 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(json.dumps({'error': 'File or folder not found'}).encode())
                 return
 
-            # Delete in background thread to avoid blocking
             def delete_async():
                 try:
                     if os.path.isfile(target_path):
                         os.remove(target_path)
-                        print(f"Deleted file: {target_path}")
                     elif os.path.isdir(target_path):
-                        import shutil
                         shutil.rmtree(target_path)
-                        print(f"Deleted folder: {target_path}")
                 except Exception as e:
-                    print(f"Delete error: {e}")
+                    pass
 
-            # Submit deletion to background thread
             background_executor.submit(delete_async)
 
-            # Return immediately with 202 Accepted
             self.send_response(202)
             self._set_cors_headers()
             self.send_header('Content-Type', 'application/json')
@@ -518,20 +488,8 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
 
         super().do_DELETE() if hasattr(super(), 'do_DELETE') else None
 
-
-def print_banner():
-    """Print ASCII banner"""
-    banner = r"""
-██████╗  ██████╗ ██████╗ ████████╗    ██████╗  █████╗ ██╗     
-██╔══██╗██╔═══██╗██╔══██╗╚══██╔══╝    ██╔══██╗██╔══██╗██║     
-██████╔╝██║   ██║██████╔╝   ██║       ██████╔╝███████║██║     
-██╔═══╝ ██║   ██║██╔══██╗   ██║       ██╔═══╝ ██╔══██║██║     
-██║     ╚██████╔╝██║  ██║   ██║       ██║     ██║  ██║███████╗
-╚═╝      ╚═════╝ ╚═╝  ╚═╝   ╚═╝       ╚═╝     ╚═╝  ╚═╝╚══════╝
-"""
-    print(banner)
-    print("PortPal - Simple Local File Hosting Server")
-    print("=" * 60)
+    def log_message(self, format, *args):
+        pass  # Suppress logs
 
 
 def get_ipv4():
@@ -546,187 +504,396 @@ def get_ipv4():
         return "127.0.0.1"
 
 
-def show_ipv4_menu():
-    """Show device IPv4 address"""
-    os.system('cls' if os.name == 'nt' else 'clear')
-    print_banner()
-    print("\n Device IPv4 Address")
-    print("-" * 60)
-    ipv4 = get_ipv4()
-    print(f"Your IPv4: {ipv4}")
-    print("\nYou can access your files from other devices using:")
-    print(f"http://{ipv4}:8000 (or the port you choose)")
-    print("\n" + "=" * 60)
-    input("Press Enter to return to menu...")
-
-
-def show_help_menu():
-    """Show help information"""
-    os.system('cls' if os.name == 'nt' else 'clear')
-    print_banner()
-    print("\n Help")
-    print("-" * 60)
-    print("PortPal allows you to easily host files on a local server.")
-    print("\nHow to use:")
-    print("1. Place files in the 'public' folder")
-    print("2. Start the server from the menu")
-    print("3. Access your files via http://localhost:PORT")
-    print("4. Use 'Get Device IPv4' to access from other devices")
-    print("\nSupported features:")
-    print("- Automatic file listing")
-    print("- Download files from browser")
-    print("- Works on local network")
-    print("=" * 60)
-    input("Press Enter to return to menu...")
-
-
-def start_server(port=None):
-    """Start the HTTP server"""
-    # Change to public directory if it exists
-    public_dir = os.path.join(os.path.dirname(__file__), 'public')
-    if os.path.exists(public_dir):
-        os.chdir(public_dir)
-        CustomHTTPHandler.root_dir = os.getcwd()
-        print(f"Serving files from: {public_dir}")
-    else:
-        print("Warning: 'public' directory not found. Serving from current directory.")
-
-    handler = CustomHTTPHandler
-
-    # if the port is used ask for a different one
-    while True:
+def load_config():
+    """Load configuration from file"""
+    if os.path.exists(CONFIG_FILE):
         try:
-            with socketserver.TCPServer(("0.0.0.0", port), handler) as httpd:
-                ipv4 = get_ipv4()
-                print(
-                    f"Serving HTTP Server on {ipv4} port {port} (http://{ipv4}:{port}/) ..."
-                )
-                print("Press Ctrl+C to stop the server.")
-                try:
-                    httpd.serve_forever()
-                except KeyboardInterrupt:
-                    print("\nShutting down...")
-                break
-        except OSError as e:
-            print(f"Cannot bind to port {port} — {e}")
-            suggested = port + 1
-            while True:
-                try:
-                    user_input = input(
-                        f"Enter a different port to try [{suggested}]: "
-                    ).strip()
-                except EOFError:
-                    user_input = ""
-
-                if user_input == "":
-                    port = suggested
-                    break
-
-                try:
-                    p = int(user_input)
-                except ValueError:
-                    print("Please enter a valid port")
-                    continue
-
-                if 1 <= p <= 65535:
-                    port = p
-                    break
-                else:
-                    print("Port must be between 1 and 65535.")
+            with open(CONFIG_FILE, 'r') as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
 
 
-def start_server_menu():
-    """Show server startup options"""
-    global SERVER_PASSWORD, SERVER_USERNAME
+def save_config(config):
+    """Save configuration to file"""
+    try:
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(config, f, indent=2)
+    except:
+        pass
+
+
+def start_server_thread(folder, port, username, password):
+    """Start server in background thread"""
+    global SERVER_PASSWORD, SERVER_USERNAME, CURRENT_SERVER
+    
+    # Normalize folder to an absolute path for consistent serving
+    canonical_folder = os.path.abspath(folder)
+
+    SERVER_USERNAME = username if username else None
+    SERVER_PASSWORD = password if password else None
+    CustomHTTPHandler.root_dir = canonical_folder
+    CustomHTTPHandler.directory = canonical_folder
+    handler_cls = functools.partial(CustomHTTPHandler, directory=canonical_folder)
+    
+    try:
+        with socketserver.TCPServer(("0.0.0.0", port), handler_cls) as httpd:
+            CURRENT_SERVER = httpd
+            httpd.serve_forever()
+    except Exception as e:
+        CURRENT_SERVER = None
+
+
+def _set_theme_safe(name: str = 'DarkBlue3'):
+    """Set theme in a version-safe way across PySimpleGUI variants."""
+    for meth in ("theme", "set_theme", "theme_global", "set_global_theme"):
+        fn = getattr(sg, meth, None)
+        if callable(fn):
+            try:
+                fn(name)
+                return
+            except Exception:
+                pass
+
+def _set_options_safe(**kwargs):
+    """Set global options using whichever API is available (v4/v5)."""
+    for meth in ("set_options", "SetOptions"):
+        fn = getattr(sg, meth, None)
+        if callable(fn):
+            try:
+                fn(**kwargs)
+                return True
+            except Exception:
+                pass
+    return False
+
+
+def _pysimplegui_available() -> bool:
+    """Check if core PySimpleGUI APIs used by this app exist."""
+    required = ("Text", "Window", "Button", "Input", "FolderBrowse")
+    return all(hasattr(sg, name) for name in required)
+
+
+def create_gui_tk():
+    """Tkinter fallback GUI for environments where PySimpleGUI v5 API differs."""
+    if tk is None:
+        print("Tkinter is unavailable; cannot launch fallback GUI.")
+        return
+
+    # Load config
+    config = load_config()
+    last_folder = config.get('last_folder', str(Path.home()))
+    last_port = int(config.get('last_port', 8000))
+    last_username = config.get('last_username', '')
+
+    root = tk.Tk()
+    root.title('PortPal GUI Server')
+    root.geometry('480x420')
+    root.resizable(False, False)
+
+    # Set window icon
+    base_path = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    icon_path = base_path / "server.ico"
+    if icon_path.exists():
+        try:
+            root.iconbitmap(str(icon_path))
+        except Exception:
+            pass
+
+    bg = '#1A202C'
+    fg = '#E2E8F0'
+    accent = '#667eea'
+    success = '#48BB78'
+    warn = '#FFD700'
+    danger = '#F56565'
+
+    root.configure(bg=bg)
+
+    # Variables
+    folder_var = tk.StringVar(value=last_folder)
+    port_var = tk.StringVar(value=str(last_port))
+    user_var = tk.StringVar(value=last_username)
+    pass_var = tk.StringVar(value='')
+    ipv4_var = tk.StringVar(value=get_ipv4())
+    status_var = tk.StringVar(value='Idle')
+    url_var = tk.StringVar(value='N/A')
+
+    # Helpers
+    def pick_folder():
+        sel = filedialog.askdirectory(initialdir=folder_var.get() or str(Path.home()))
+        if sel:
+            folder_var.set(sel)
+
+    server_running = {"value": False}
+
+    def start_server_gui():
+        folder = folder_var.get()
+        try:
+            port = int(port_var.get())
+        except ValueError:
+            messagebox.showerror('Error', 'Please enter a valid port (1-65535)')
+            return
+        if not folder or not os.path.isdir(folder):
+            messagebox.showerror('Error', 'Please select a valid folder')
+            return
+        if not (1 <= port <= 65535):
+            messagebox.showerror('Error', 'Port must be between 1 and 65535')
+            return
+
+        # Save config
+        config['last_folder'] = folder
+        config['last_port'] = port
+        config['last_username'] = user_var.get()
+        save_config(config)
+
+        # Start server thread
+        th = threading.Thread(
+            target=start_server_thread,
+            args=(folder, port, user_var.get(), pass_var.get()),
+            daemon=True
+        )
+        th.start()
+        server_running["value"] = True
+        status_var.set('Running ✓')
+        ipv4_var.set(get_ipv4())
+        url_var.set(f'http://{ipv4_var.get()}:{port}')
+        start_btn.configure(state=tk.DISABLED, bg=success)
+        stop_btn.configure(state=tk.NORMAL, bg=danger)
+        open_btn.configure(state=tk.NORMAL, bg='#667eea')
+
+    def stop_server_gui():
+        if CURRENT_SERVER:
+            try:
+                CURRENT_SERVER.shutdown()
+            except Exception:
+                pass
+        server_running["value"] = False
+        status_var.set('Idle')
+        url_var.set('N/A')
+        start_btn.configure(state=tk.NORMAL, bg=success)
+        stop_btn.configure(state=tk.DISABLED, bg=danger)
+        open_btn.configure(state=tk.DISABLED, bg='#667eea')
+
+    def open_server():
+        """Open server URL in default browser"""
+        url = url_var.get()
+        if url and url != 'N/A':
+            import webbrowser
+            webbrowser.open(url)
+
+    def on_close():
+        if server_running["value"] and CURRENT_SERVER:
+            try:
+                CURRENT_SERVER.shutdown()
+            except Exception:
+                pass
+        root.destroy()
+
+    # Layout
+    def mk_label(text, size=10, color=fg):
+        return tk.Label(root, text=text, fg=color, bg=bg, font=('Segoe UI', size))
+
+    title = tk.Label(root, text='PortPal Server', fg=accent, bg=bg, font=('Segoe UI', 18, 'bold'))
+    subtitle = mk_label('Desktop File Sharing', 10, '#A0AEC0')
+    title.place(x=20, y=14)
+    subtitle.place(x=20, y=42)
+
+    mk_label('📁 Folder to Share:', 10).place(x=20, y=76)
+    folder_entry = tk.Entry(root, textvariable=folder_var, width=42, fg=fg, bg='#2D3748', insertbackground=fg)
+    folder_entry.place(x=20, y=98)
+    browse_btn = tk.Button(root, text='Browse', command=pick_folder, width=8, bg=accent, fg='white', relief=tk.FLAT)
+    browse_btn.place(x=376, y=96)
+
+    mk_label('🔌 Port:', 10).place(x=20, y=132)
+    port_entry = tk.Entry(root, textvariable=port_var, width=10, fg=fg, bg='#2D3748', insertbackground=fg)
+    port_entry.place(x=78, y=132)
+
+    mk_label('Username (optional):', 10).place(x=170, y=132)
+    user_entry = tk.Entry(root, textvariable=user_var, width=14, fg=fg, bg='#2D3748', insertbackground=fg)
+    user_entry.place(x=318, y=132)
+
+    mk_label('Password (optional):', 10).place(x=20, y=164)
+    pass_entry = tk.Entry(root, textvariable=pass_var, width=20, show='*', fg=fg, bg='#2D3748', insertbackground=fg)
+    pass_entry.place(x=176, y=164)
+
+    # Buttons
+    start_btn = tk.Button(root, text='▶ Start Server', command=start_server_gui, bg=success, fg='black', font=('Segoe UI', 10, 'bold'), relief=tk.RAISED, bd=2, padx=10, pady=8)
+    stop_btn = tk.Button(root, text='⏹ Stop Server', command=stop_server_gui, bg=danger, fg='black', font=('Segoe UI', 10, 'bold'), relief=tk.RAISED, bd=2, padx=10, pady=8, state=tk.DISABLED)
+    open_btn = tk.Button(root, text='🌐 Open Server', command=open_server, bg='#667eea', fg='black', font=('Segoe UI', 10, 'bold'), relief=tk.RAISED, bd=2, padx=10, pady=8, state=tk.DISABLED)
+    start_btn.place(x=20, y=200, width=440, height=38)
+    stop_btn.place(x=20, y=244, width=440, height=38)
+    open_btn.place(x=20, y=288, width=440, height=38)
+
+    # Status
+    mk_label('📍 IPv4 Address:', 10).place(x=20, y=336)
+    ipv4_lbl = mk_label('', 10, '#90EE90')
+    ipv4_lbl.configure(textvariable=ipv4_var)
+    ipv4_lbl.place(x=150, y=336)
+
+    mk_label('Status:', 10).place(x=20, y=360)
+    status_lbl = mk_label('', 10, warn)
+    status_lbl.configure(textvariable=status_var)
+    status_lbl.place(x=78, y=360)
+
+    # Footer with credit
+    def open_github(event=None):
+        import webbrowser
+        webbrowser.open('https://github.com/thisisdara')
+
+    footer = tk.Label(root, text='Made by ThisIsDara', fg='#A0AEC0', bg=bg, font=('Segoe UI', 8), cursor='hand2')
+    footer.place(x=360, y=398)
+    footer.bind('<Button-1>', open_github)
+
+    root.protocol('WM_DELETE_WINDOW', on_close)
+    root.mainloop()
+
+
+def create_gui():
+    """Create and run the GUI"""
+    # If PySimpleGUI essential APIs are missing, use Tkinter fallback
+    if not _pysimplegui_available():
+        return create_gui_tk()
+
+    # Set theme (handles PySimpleGUI v4/v5 API differences)
+    _set_theme_safe('DarkBlue3')
+    _set_options_safe(
+        font=('Segoe UI', 10),
+        margins=(20, 20),
+        border_width=0
+    )
+    
+    # Load config
+    config = load_config()
+    last_folder = config.get('last_folder', str(Path.home()))
+    last_port = config.get('last_port', 8000)
+    last_username = config.get('last_username', '')
+    
+    # Layout
+    layout = [
+        [sg.Text('PortPal Server', font=('Segoe UI', 18, 'bold'), text_color='#667eea')],
+        [sg.Text('Desktop File Sharing', text_color='#A0AEC0', font=('Segoe UI', 10))],
+        [sg.Text('_' * 50)],
+        
+        [sg.Text('📁 Folder to Share:', font=('Segoe UI', 10, 'bold'))],
+        [sg.Input(last_folder, key='-FOLDER-', size=(35, 1), disabled=True, background_color='#2D3748'),
+         sg.FolderBrowse(button_color=('#FFFFFF', '#667eea'), size=(8, 1))],
+        
+        [sg.Text('🔌 Port:', font=('Segoe UI', 10, 'bold')), 
+         sg.Input(last_port, key='-PORT-', size=(15, 1), background_color='#2D3748', text_color='#FFFFFF'),
+         sg.Text('Username (optional):'),
+         sg.Input(last_username, key='-USERNAME-', size=(12, 1), background_color='#2D3748', text_color='#FFFFFF')],
+        
+        [sg.Text('Password (optional):', font=('Segoe UI', 10, 'bold')), 
+         sg.Input('', key='-PASSWORD-', size=(20, 1), password_char='*', background_color='#2D3748', text_color='#FFFFFF')],
+        
+        [sg.Text('_' * 50)],
+        
+        [sg.Button('▶ Start Server', button_color=('#000000', '#48BB78'), size=(14, 1), key='-START-'),
+         sg.Button('⏹ Stop Server', button_color=('#000000', '#F56565'), size=(14, 1), key='-STOP-', disabled=True),
+         sg.Button('🌐 Open', button_color=('#000000', '#667eea'), size=(8, 1), key='-OPEN-', disabled=True)],
+        
+        [sg.Text('_' * 50)],
+        
+        [sg.Text('📍 IPv4 Address:', font=('Segoe UI', 10, 'bold')),
+         sg.Text(get_ipv4(), text_color='#90EE90', font=('Segoe UI', 10, 'bold'), key='-IPV4-')],
+        
+        [sg.Text('Status:', font=('Segoe UI', 10, 'bold')),
+         sg.Text('Idle', text_color='#FFD700', font=('Segoe UI', 10, 'bold'), key='-STATUS-')],
+        
+        [sg.Text('Access URL:', font=('Segoe UI', 10, 'bold')),
+         sg.Text('N/A', text_color='#87CEEB', font=('Segoe UI', 9), key='-URL-')],
+
+        [sg.Text('Made by ', text_color='#A0AEC0', font=('Segoe UI', 8)),
+         sg.Text('ThisIsDara', text_color='#87CEEB', font=('Segoe UI', 8, 'underline'), key='-CREDIT-', enable_events=True)],
+    ]
+    
+    window = sg.Window(
+        'PortPal GUI Server',
+        layout,
+        size=(480, 360),
+        finalize=True,
+        keep_on_top=False,
+        background_color='#1A202C',
+        text_color='#E2E8F0'
+    )
+    
+    server_thread = None
+    server_running = False
+    
     while True:
-        os.system('cls' if os.name == 'nt' else 'clear')
-        print_banner()
-        print("\n Start Server")
-        print("-" * 60)
-        print("1. Start with default port (8000)")
-        print("2. Set custom port")
-        print("3. Go back")
-        print("=" * 60)
+        event, values = window.read(timeout=100)
         
-        choice = input("Enter your choice (1-3): ").strip()
+        if event == sg.WIN_CLOSED:
+            if server_running:
+                CURRENT_SERVER.shutdown()
+            break
         
-        if choice == "1":
-            username = input("Enter username for server [optional]: ").strip()
-            password = input("Enter password for server [optional]: ").strip()
+        if event == '-START-':
+            folder = values['-FOLDER-']
+            port_str = values['-PORT-']
+            username = values['-USERNAME-']
+            password = values['-PASSWORD-']
             
-            if username or password:
-                SERVER_USERNAME = username if username else None
-                SERVER_PASSWORD = password if password else None
+            if not folder or not os.path.isdir(folder):
+                sg.popup_error('Please select a valid folder', title='Error')
+                continue
             
-            os.system('cls' if os.name == 'nt' else 'clear')
-            print_banner()
-            start_server(8000)
-            break
-        elif choice == "2":
-            os.system('cls' if os.name == 'nt' else 'clear')
-            print_banner()
+            try:
+                port = int(port_str)
+                if not (1 <= port <= 65535):
+                    raise ValueError()
+            except:
+                sg.popup_error('Please enter a valid port (1-65535)', title='Error')
+                continue
             
-            # Get credentials first
-            username = input("Enter username for server [optional]: ").strip()
-            password = input("Enter password for server [optional]: ").strip()
+            # Save config
+            config['last_folder'] = folder
+            config['last_port'] = port
+            config['last_username'] = username
+            save_config(config)
             
-            if username or password:
-                SERVER_USERNAME = username if username else None
-                SERVER_PASSWORD = password if password else None
+            # Start server
+            server_thread = threading.Thread(
+                target=start_server_thread,
+                args=(folder, port, username, password),
+                daemon=True
+            )
+            server_thread.start()
+            server_running = True
             
-            while True:
-                try:
-                    port_input = input("Enter port number [8000] (or 'N' to return): ").strip().lower()
-                    if port_input == "n":
-                        break
-                    if port_input == "":
-                        port = 8000
-                    else:
-                        port = int(port_input)
-                    
-                    if 1 <= port <= 65535:
-                        start_server(port)
-                        break
-                    else:
-                        print("Port must be between 1 and 65535.")
-                except ValueError:
-                    print("Please enter a valid port number")
-            break
-        elif choice == "3":
-            break
-        else:
-            print("Invalid choice. Please try again.")
-            input("Press Enter to continue...")
+            window['-START-'].update(disabled=True)
+            window['-STOP-'].update(disabled=False)
+            window['-OPEN-'].update(disabled=False)
+            window['-STATUS-'].update('Running ✓', text_color='#48BB78')
+            
+            ipv4 = get_ipv4()
+            window['-IPV4-'].update(ipv4)
+            window['-URL-'].update(f'http://{ipv4}:{port}')
+        
+        if event == '-STOP-':
+            if CURRENT_SERVER:
+                CURRENT_SERVER.shutdown()
+            server_running = False
+            
+            window['-START-'].update(disabled=False)
+            window['-STOP-'].update(disabled=True)
+            window['-OPEN-'].update(disabled=True)
+            window['-STATUS-'].update('Idle', text_color='#FFD700')
+            window['-URL-'].update('N/A')
+        
+        if event == '-OPEN-':
+            url = values['-URL-']
+            if url and url != 'N/A':
+                import webbrowser
+                webbrowser.open(url)
+        
+        if event == '-CREDIT-':
+            import webbrowser
+            webbrowser.open('https://github.com/thisisdara')
+    
+    window.close()
 
 
-def main():
-    """Main menu"""
-    while True:
-        os.system('cls' if os.name == 'nt' else 'clear')
-        print_banner()
-        print("\nMain Menu")
-        print("-" * 60)
-        print("1. Start Server")
-        print("2. Get Device IPv4")
-        print("3. Help")
-        print("4. Exit")
-        print("=" * 60)
-        
-        choice = input("Enter your choice (1-4): ").strip()
-        
-        if choice == "1":
-            start_server_menu()
-        elif choice == "2":
-            show_ipv4_menu()
-        elif choice == "3":
-            show_help_menu()
-        elif choice == "4":
-            print("Thanks for using PortPal! Built by https://github.com/ThisIsDara")
-            break
-        else:
-            print("Invalid choice. Please try again.")
-            input("Press Enter to continue...")
-
-
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    create_gui()

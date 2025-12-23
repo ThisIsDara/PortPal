@@ -1,0 +1,26 @@
+# UTF-8
+#
+# For more details about fixed file info 'ffi' see:
+# http://msdn.microsoft.com/en-us/library/ms646997.aspx
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    mask=0x3f,
+    mask_ex=0x0,
+    both=(1, 0, 0, 0),
+    raw_string_data=[(u'Translation', 1033, 1200)]
+    ),
+  kids=[StringFileInfo(
+      [StringTable(
+        u'040904B0',
+        [StringData(u'CompanyName', u'ThisIsDara'),
+        StringData(u'FileDescription', u'PortPal - Local File Server'),
+        StringData(u'FileVersion', u'1.0.0.0'),
+        StringData(u'InternalName', u'PortPal'),
+        StringData(u'LegalCopyright', u'Copyright © 2025 ThisIsDara. All rights reserved.'),
+        StringData(u'OriginalFilename', u'PortPal.exe'),
+        StringData(u'ProductName', u'PortPal'),
+        StringData(u'ProductVersion', u'1.0.0.0')])
+    ]), PVTBlockLanguage([PVTValue(u'Translation', 1033, 1200)])
+  ],
+  is_exe=True,
+  entry_point=None)

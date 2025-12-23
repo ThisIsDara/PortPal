@@ -70,6 +70,22 @@ source venv/bin/activate  # On Windows: venv\Scripts\activate
 
 ## Usage
 
+## Linux Build
+
+You can build a Linux binary via GitHub Actions or locally on Ubuntu:
+
+- GitHub Actions: trigger the workflow "Build PortPal (Linux)" under Actions (or push a tag `v*`). It produces an artifact named `PortPal-linux`.
+- Local Ubuntu build:
+
+```bash
+sudo apt-get update && sudo apt-get install -y python3-tk
+python3 -m pip install --upgrade pip
+pip install pyinstaller PySimpleGUI
+pyinstaller PortPal.spec
+```
+
+The output will be written to `dist/PortPal` (no `.exe` extension on Linux).
+
 ### Interactive Menu (Recommended)
 
 Launch the interactive menu:
