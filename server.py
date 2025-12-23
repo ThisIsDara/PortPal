@@ -12,6 +12,7 @@ import os
 import json
 import socket
 import threading
+import atexit
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -22,6 +23,8 @@ from collections import defaultdict
 
 # Thread pool for background operations
 background_executor = ThreadPoolExecutor(max_workers=2)
+# Ensure background executor is shut down on process exit to prevent thread leaks
+atexit.register(background_executor.shutdown, wait=False)
 
 # Global password variable
 SERVER_PASSWORD = None

@@ -1506,25 +1506,34 @@
         let _onlineFetchTimer = null;
 
         function startOnlineUsersPolling() {
-            // register immediately then every 60s
+            // register immediately then keep-alive under server timeout (30s)
             registerOnlineUser();
             fetchOnlineUsers();
             if (_onlinePingTimer) clearInterval(_onlinePingTimer);
             if (_onlineFetchTimer) clearInterval(_onlineFetchTimer);
-            _onlinePingTimer = setInterval(registerOnlineUser, 60000);
+            // Ping every 20s to stay below ONLINE_TIMEOUT (30s)
+            _onlinePingTimer = setInterval(registerOnlineUser, 20000);
             _onlineFetchTimer = setInterval(fetchOnlineUsers, 10000);
         }
 
         // expose for calls after login/initialize
         window.startOnlineUsersPolling = startOnlineUsersPolling;
-        // pinging server to make sure tab is open
-        setInterval(() => {
-        fetch('/api/online_users', {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'Content-Type': 'application/json' }
-        });
-        }, 10000);
+
+        // Stop polling and clear timers (cleanup on page close/switch)
+        function stopOnlineUsersPolling() {
+            try {
+                if (_onlinePingTimer) clearInterval(_onlinePingTimer);
+                if (_onlineFetchTimer) clearInterval(_onlineFetchTimer);
+            } catch (e) {
+                // ignore
+            } finally {
+                _onlinePingTimer = null;
+                _onlineFetchTimer = null;
+            }
+        }
+
+        window.stopOnlineUsersPolling = stopOnlineUsersPolling;
+        window.addEventListener('beforeunload', stopOnlineUsersPolling);
 
         selectFilesBtn.addEventListener('click', () => fileInput.click());
         fileInput.addEventListener('change', e => uploadFiles(e.target.files));
