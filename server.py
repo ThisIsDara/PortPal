@@ -377,8 +377,16 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             pass
 
     def do_POST(self):
-        # endpoint: register/ping online user (no auth required)
+        # endpoint: register/ping online user
         if self.path.startswith('/api/online_users'):
+            # Require authentication to add new online user
+            if not self._is_authenticated():
+                self.send_response(401)
+                self.send_header('Content-type', 'application/json')
+                self._set_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Unauthorized'}).encode())
+                return
             try:
                 content_length = int(self.headers.get('Content-Length', 0))
             except ValueError:
