@@ -1517,6 +1517,14 @@
 
         // expose for calls after login/initialize
         window.startOnlineUsersPolling = startOnlineUsersPolling;
+        // pinging server to make sure tab is open
+        setInterval(() => {
+        fetch('/api/online_users', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        }, 10000);
 
         selectFilesBtn.addEventListener('click', () => fileInput.click());
         fileInput.addEventListener('change', e => uploadFiles(e.target.files));
