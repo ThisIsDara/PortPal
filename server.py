@@ -33,6 +33,29 @@ LOCKOUT_DURATION = 900  # 15 minutes in seconds
 login_attempts = defaultdict(list)  # IP -> list of attempt timestamps
 locked_ips = {}  # IP -> lockout timestamp
 
+# Online users tracking
+online_users = {}
+online_lock = threading.Lock()
+ONLINE_TIMEOUT = 30  # consider user offline after 30 seconds without ping
+
+def device_from_ua(ua: str) -> str:
+    ua = (ua or '').lower()
+    if 'iphone' in ua or 'ipad' in ua or 'ipod' in ua:
+        return 'iOS'
+    if 'android' in ua:
+        return 'Android'
+    if 'windows phone' in ua:
+        return 'Windows Phone'
+    if 'windows' in ua:
+        return 'Windows'
+    if 'mac os' in ua or 'macintosh' in ua or 'darwin' in ua:
+        return 'Mac'
+    if 'linux' in ua:
+        return 'Linux'
+    if 'chrome' in ua:
+        return 'Chrome'
+    return 'Unknown'
+
 
 class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
     root_dir = os.getcwd()
@@ -297,6 +320,39 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
                 self.wfile.write(json.dumps({'error': 'Unable to read storage info'}).encode())
             return
 
+        # Online users listing
+        if parsed.path == '/api/online_users':
+            # Require authentication to view online users (keep consistent with files/storage)
+            if not self._is_authenticated():
+                self.send_response(401)
+                self.send_header('Content-type', 'application/json')
+                self._set_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Unauthorized'}).encode())
+                return
+
+            # purge stale entries
+            current_time = time.time()
+            with online_lock:
+                stale = [ip for ip, info in online_users.items() if current_time - info.get('last_seen', 0) > ONLINE_TIMEOUT]
+                for ip in stale:
+                    del online_users[ip]
+
+                payload = []
+                for ip, info in online_users.items():
+                    payload.append({
+                        'ip': ip,
+                        'device': info.get('device', ''),
+                        'last_seen': int(info.get('last_seen', 0))
+                    })
+
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json')
+            self._set_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({'online': payload}).encode())
+            return
+
         # Default behavior for other requests (file downloads)
         # Allow unauthenticated access to root path and index.html (contains login form)
         # but require authentication for everything else
@@ -321,6 +377,44 @@ class CustomHTTPHandler(http.server.SimpleHTTPRequestHandler):
             pass
 
     def do_POST(self):
+        # endpoint: register/ping online user
+        if self.path.startswith('/api/online_users'):
+            # Require authentication to add new online user
+            if not self._is_authenticated():
+                self.send_response(401)
+                self.send_header('Content-type', 'application/json')
+                self._set_cors_headers()
+                self.end_headers()
+                self.wfile.write(json.dumps({'error': 'Unauthorized'}).encode())
+                return
+            try:
+                content_length = int(self.headers.get('Content-Length', 0))
+            except ValueError:
+                content_length = 0
+
+            body = self.rfile.read(content_length) if content_length > 0 else b'{}'
+            try:
+                data = json.loads(body)
+            except Exception:
+                data = {}
+
+            ua = data.get('userAgent') or self.headers.get('User-Agent', '')
+            device = data.get('device') or device_from_ua(ua)
+            client_ip = self._get_client_ip()
+            now = time.time()
+            with online_lock:
+                online_users[client_ip] = {
+                    'device': device,
+                    'last_seen': now
+                }
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self._set_cors_headers()
+            self.end_headers()
+            self.wfile.write(json.dumps({'ok': True}).encode())
+            return
+
         # logic for checking password
         if self.path == '/api/login':
             client_ip = self._get_client_ip()

@@ -886,6 +886,15 @@
                     <p style="font-size: 0.9rem;">No statistics available</p>
                 </div>
             </div>
+
+            <h2>👥 Online Users</h2>
+            <div id="onlineUsers" class="stat-item" style="padding: 0.5rem;">
+                <div id="onlineUsersList">
+                    <div class="empty-state" style="padding: 0.5rem;">
+                        <p style="font-size: 0.9rem;">No users online</p>
+                    </div>
+                </div>
+            </div>
         </div>
         </div>
     </div>
@@ -911,6 +920,7 @@
                     document.getElementById('mainContent').classList.remove('hidden');
                     loadFiles();
                     loadStorage();
+                    if (window.startOnlineUsersPolling) window.startOnlineUsersPolling();
                 }
             } catch (error) {
                 console.error('Error checking password:', error);
@@ -950,6 +960,7 @@
                     document.getElementById('mainContent').classList.remove('hidden');
                     loadFiles();
                     loadStorage();
+                    if (window.startOnlineUsersPolling) window.startOnlineUsersPolling();
                 } else if (response.status === 429) {
                     // Too many failed attempts - locked out
                     const data = await response.json();
@@ -1435,6 +1446,85 @@
                 setStatus(`Error: ${error.message}`, true);
             }
         }
+
+        // --- Online users: register + polling ---
+        function detectDevice(ua) {
+            ua = (ua || '').toLowerCase();
+            if (ua.includes('iphone') || ua.includes('ipad') || ua.includes('ipod')) return 'iOS';
+            if (ua.includes('android')) return 'Android';
+            if (ua.includes('windows phone')) return 'Windows Phone';
+            if (ua.includes('windows')) return 'Windows';
+            if (ua.includes('mac os') || ua.includes('macintosh')) return 'Mac';
+            if (ua.includes('linux')) return 'Linux';
+            return 'Unknown';
+        }
+
+        async function registerOnlineUser() {
+            try {
+                await fetch('/api/online_users', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ device: detectDevice(navigator.userAgent) })
+                });
+            } catch (e) {
+                // ignore errors
+            }
+        }
+
+        async function fetchOnlineUsers() {
+            try {
+                const res = await fetch('/api/online_users', { credentials: 'include' });
+                if (!res.ok) return;
+                const data = await res.json();
+                renderOnlineUsers(data.online || []);
+            } catch (e) {
+                // ignore
+            }
+        }
+
+        function renderOnlineUsers(list) {
+            const el = document.getElementById('onlineUsersList');
+            if (!el) return;
+            if (!list || list.length === 0) {
+                el.innerHTML = '<div class="empty-state" style="padding: 0.5rem;"><p style="font-size: 0.9rem;">No users online</p></div>';
+                return;
+            }
+            el.innerHTML = list.map(u => {
+                const ts = u.last_seen ? new Date(u.last_seen * 1000).toLocaleTimeString() : '';
+                return `<div class="stat-item" style="margin-bottom:0.5rem;padding:0.6rem;border-radius:8px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.3rem"><strong>${u.ip}</strong>
+                        <span style="font-size:0.85rem;color:#666">${u.device}</span>
+                    </div>
+                    <div style="font-size:0.75rem;color:#999;margin-top:0.35rem">Last seen: ${ts}</div>
+                </div>`;
+            }).join('');
+        }
+
+        // polling timers
+        let _onlinePingTimer = null;
+        let _onlineFetchTimer = null;
+
+        function startOnlineUsersPolling() {
+            // register immediately then every 60s
+            registerOnlineUser();
+            fetchOnlineUsers();
+            if (_onlinePingTimer) clearInterval(_onlinePingTimer);
+            if (_onlineFetchTimer) clearInterval(_onlineFetchTimer);
+            _onlinePingTimer = setInterval(registerOnlineUser, 60000);
+            _onlineFetchTimer = setInterval(fetchOnlineUsers, 10000);
+        }
+
+        // expose for calls after login/initialize
+        window.startOnlineUsersPolling = startOnlineUsersPolling;
+        // pinging server to make sure tab is open
+        setInterval(() => {
+        fetch('/api/online_users', {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        }, 10000);
 
         selectFilesBtn.addEventListener('click', () => fileInput.click());
         fileInput.addEventListener('change', e => uploadFiles(e.target.files));
